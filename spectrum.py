@@ -7,6 +7,7 @@ from scipy.interpolate import interp2d, interp1d
 rsun = 8.127 # [kpc]
 s_max = 300
 kpc2cm = 3.0857 * np.power(10., 21)
+rho_local = 0.4  # GeV/cm^3
 
 ew_dict = {"e": 4, "mu": 7, "tau": 10, "bb": 13, "tt": 14, "WW": 17, "ZZ": 20, "gamma": 22, "h": 23}
 noew_dict = {"e": 2, "mu": 3, "tau": 4, "bb": 7, "tt": 8, "WW": 9, "ZZ": 10, "gamma": 12, "h": 13}
@@ -26,7 +27,7 @@ class DMProfile(abc.ABC):
         r = np.sqrt(rr)
         return r
         
-    def get_jfactor(self, theta_1, theta_2, npoint):
+    def get_jfactor_theta(self, theta_1, theta_2, npoint):
         """Calculate the j factor between theta_1 and theta_2.
         Args:
             theta_1: start angle of the anuli, double, in radians.
@@ -48,15 +49,49 @@ class DMProfile(abc.ABC):
 
 class NFWProfile(DMProfile):
     
-    def __init__(self, gamma, rs, rhos):
+    def __init__(self, gamma, rs, rhos, rho_local=rho_local):
         self.gamma = gamma
         self.rs = rs
         self.rhos = rhos
+        self.rho_local = rho_local
         
+    def _rho_dm_temp(self, r):
+        rho_val = self.rhos #  * np.power(2., 3-gamma)
+        rho_val = rho_val * np.power(r/self.rs, -self.gamma)
+        rho_val = rho_val / np.power(1+r/self.rs, 3-self.gamma)
+        return rho_val
+
+    def reset_rhos(self):
+        rho_local_calc = self._rho_dm_temp(rsun)
+        self.rhos = self.rho_local / rho_local_calc * self.rhos
+        print("set rhos = {}".format(self.rhos))
+    
     def rho_dm(self, r):
-        rho_val = rhos * np.power(2., 3-gamma)
-        rho_val = rho_val * np.power(r/self.rs, -gamma)
-        rho_val = rho_val / np.power(1+r/self.rs, 3-gamma)
+        self.reset_rhos()
+        rho_val = self._rho_dm_temp(r)
+        return rho_val
+
+
+class FireProfile(DMProfile):
+
+    def __init__(self, path, i, rho_local=rho_local):
+        self.path = path
+        self.i = i  # the number of the fire profile.
+        self.rho_local = rho_local
+        self.rho_fn = self.get_rho_fn
+
+    @property
+    def get_rho_fn(self):
+        path = self.path + "/density_hydro_{}.npy".format(np.int_(self.i))
+        fire = np.load(path)
+        at = np.argmin((fire[::,0]-rsun)**2)
+        rs = fire[::,0]
+        rhos = fire[::,1] * self.rho_local / fire[::,1][at]
+        rho_fn = interp1d(rs, rhos, bounds_error=False, fill_value=0)
+        return rho_fn
+
+    def rho_dm(self, r):
+        rho_val = self.rho_fn(r)
         return rho_val
 
 
